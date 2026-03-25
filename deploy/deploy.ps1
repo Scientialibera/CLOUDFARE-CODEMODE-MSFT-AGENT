@@ -120,7 +120,8 @@ if ($storageExists -eq "0") {
 $storageScope = az storage account show --resource-group $rg --name $storageAccountName --query id -o tsv
 $storageAccountUrl = "https://$storageAccountName.blob.core.windows.net/"
 
-Ensure-RoleAssignment -PrincipalId $executorObjectId -PrincipalType User -Scope $storageScope -Role "Storage Blob Data Contributor"
+Write-Step $scriptName "2b. Deployer RBAC on Storage"
+Ensure-RoleAssignment -PrincipalId $executorObjectId -PrincipalType User -Scope $storageScope -Role "Storage Blob Data Owner"
 
 foreach ($c in $containers) {
     $exists = az storage container exists --account-name $storageAccountName --name $c --auth-mode login --query exists -o tsv 2>$null
@@ -167,7 +168,9 @@ if ($depExists -eq "0") {
     if ($LASTEXITCODE -ne 0) { throw "Failed to create model deployment." }
 }
 
-Ensure-RoleAssignment -PrincipalId $executorObjectId -PrincipalType User -Scope $aoaiScope -Role "Cognitive Services OpenAI User"
+Write-Step $scriptName "3c. Deployer RBAC on OpenAI"
+Ensure-RoleAssignment -PrincipalId $executorObjectId -PrincipalType User -Scope $aoaiScope -Role "Cognitive Services OpenAI Contributor"
+
 Write-Output "  Endpoint: $aoaiEndpoint"
 
 # ===================================================================
@@ -202,9 +205,7 @@ if ($storageAppExists -eq "0") {
 az webapp identity assign --resource-group $rg --name $storageApiAppName | Out-Null
 $storageApiPrincipalId = az webapp identity show --resource-group $rg --name $storageApiAppName --query principalId -o tsv
 
-Write-Step $scriptName "5b. Storage API RBAC + Settings"
-Ensure-RoleAssignment -PrincipalId $storageApiPrincipalId -Scope $storageScope -Role "Storage Blob Data Contributor"
-
+Write-Step $scriptName "5b. Storage API Settings"
 az webapp config appsettings set --resource-group $rg --name $storageApiAppName --settings `
     "AZURE_STORAGE_ACCOUNT_URL=$storageAccountUrl" `
     "SCM_DO_BUILD_DURING_DEPLOYMENT=true" `
@@ -231,10 +232,7 @@ if ($chatbotAppExists -eq "0") {
 az webapp identity assign --resource-group $rg --name $chatbotApiAppName | Out-Null
 $chatbotPrincipalId = az webapp identity show --resource-group $rg --name $chatbotApiAppName --query principalId -o tsv
 
-Write-Step $scriptName "6b. Chatbot API RBAC + Settings"
-Ensure-RoleAssignment -PrincipalId $chatbotPrincipalId -Scope $aoaiScope -Role "Cognitive Services OpenAI User"
-Ensure-RoleAssignment -PrincipalId $chatbotPrincipalId -Scope $storageScope -Role "Storage Blob Data Reader"
-
+Write-Step $scriptName "6b. Chatbot API Settings"
 az webapp config appsettings set --resource-group $rg --name $chatbotApiAppName --settings `
     "AZURE_OPENAI_ENDPOINT=$aoaiEndpoint" `
     "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$openAiDeployment" `
@@ -247,10 +245,33 @@ $chatbotUrl = "https://$chatbotFqdn"
 Write-Output "  Chatbot API URL: $chatbotUrl"
 
 # ===================================================================
-# 7. Generate .env files for local development
+# 7. RBAC — Web App Managed Identities
 # ===================================================================
 
-Write-Step $scriptName "7. Generating .env files"
+Write-Step $scriptName "7. RBAC for Web App Managed Identities"
+
+# Storage API webapp → needs full blob CRUD on the storage account
+Write-Output "  Storage API ($storageApiAppName):"
+Ensure-RoleAssignment -PrincipalId $storageApiPrincipalId -Scope $storageScope -Role "Storage Blob Data Contributor"
+
+# Chatbot API webapp → needs to call Azure OpenAI Chat Completions
+Write-Output "  Chatbot API ($chatbotApiAppName):"
+Ensure-RoleAssignment -PrincipalId $chatbotPrincipalId -Scope $aoaiScope  -Role "Cognitive Services OpenAI User"
+
+Write-Step $scriptName "7b. RBAC Summary"
+Write-Output "  Deployer (User):"
+Write-Output "    Storage:  Storage Blob Data Owner"
+Write-Output "    OpenAI:   Cognitive Services OpenAI Contributor"
+Write-Output "  Storage API Web App (MI):"
+Write-Output "    Storage:  Storage Blob Data Contributor"
+Write-Output "  Chatbot API Web App (MI):"
+Write-Output "    OpenAI:   Cognitive Services OpenAI User"
+
+# ===================================================================
+# 8. Generate .env files for local development
+# ===================================================================
+
+Write-Step $scriptName "8. Generating .env files"
 
 # storage_api/.env
 $storageApiEnvPath = Join-Path $repoRoot "storage_api" ".env"
@@ -276,10 +297,10 @@ OPENAPI_BASE_URL=$storageApiUrl
 Write-Output "  Written: codemode_openapi/.dev.vars"
 
 # ===================================================================
-# 8. Save deploy-env.json
+# 9. Save deploy-env.json
 # ===================================================================
 
-Write-Step $scriptName "8. Saving deploy-env.json"
+Write-Step $scriptName "9. Saving deploy-env.json"
 $envFile = Join-Path $PSScriptRoot "deploy-env.json"
 @{
     subscriptionId      = $subscriptionId

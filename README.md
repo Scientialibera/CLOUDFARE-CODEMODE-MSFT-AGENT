@@ -153,10 +153,19 @@ cd ..\codemode_openapi && npx wrangler deploy
 | App Service Plan (Linux B1) | Shared plan for both web apps |
 | Web App: storage API | FastAPI OpenAPI facade over storage |
 | Web App: chatbot API | Agent Framework chatbot with chat sessions |
-| RBAC assignments | Managed identity access to storage + OpenAI |
+| RBAC assignments | Managed identity + deployer access (see below) |
 
 **What is NOT created** (runs externally on Cloudflare):
 - Cloudflare Worker — deployed separately via `npx wrangler deploy`
+
+**RBAC assignments** (all via `DefaultAzureCredential`, zero API keys):
+
+| Principal | Resource | Role |
+|---|---|---|
+| Deployer (your user) | Storage Account | `Storage Blob Data Owner` |
+| Deployer (your user) | Azure OpenAI | `Cognitive Services OpenAI Contributor` |
+| Storage API Web App (MI) | Storage Account | `Storage Blob Data Contributor` |
+| Chatbot API Web App (MI) | Azure OpenAI | `Cognitive Services OpenAI User` |
 
 **Generated `.env` files** (after `deploy.ps1`):
 
