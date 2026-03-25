@@ -49,7 +49,7 @@ Connects to Azure OpenAI (`gpt-5-mini`) and the Codemode MCP endpoint. The agent
 
 Imperative `az` CLI scripts to provision and deploy everything to Azure:
 
-- `deploy.ps1` — provisions Storage Account, App Service Plan, 2 Web Apps, RBAC assignments
+- `deploy.ps1` — provisions Storage Account, Azure OpenAI (with model deployment), App Service Plan, 2 Web Apps, RBAC; generates `.env` files for all components
 - `deploy-apps.ps1` — zip-deploys code to both App Services
 - `upload-dummy-data.ps1` — generates and uploads sample PDFs to storage
 
@@ -59,13 +59,16 @@ Imperative `az` CLI scripts to provision and deploy everything to Azure:
 - **Node.js** >= 18
 - **Python** >= 3.11
 - **Wrangler** (installed as a dev dependency)
-- **Azure RBAC** on your principal:
-  - `Storage Blob Data Contributor` on the storage account
-  - `Cognitive Services OpenAI User` on the Azure OpenAI resource
 
 ## Setup
 
-### 1. Storage API
+### Option A: Automated (recommended)
+
+Run `deploy/deploy.ps1` — it provisions all Azure resources and generates `.env` files for every component automatically. See [Azure Deployment](#azure-deployment) below.
+
+### Option B: Manual local setup
+
+#### 1. Storage API
 
 ```bash
 cd storage_api
@@ -76,7 +79,7 @@ cp .env.example .env        # edit with your values
 uvicorn app:app --host 0.0.0.0 --port 8001
 ```
 
-### 2. Cloudflare Codemode bridge
+#### 2. Cloudflare Codemode bridge
 
 ```bash
 cd codemode_openapi
@@ -89,7 +92,7 @@ Update `wrangler.jsonc` vars (`OPENAPI_BASE_URL`, `INTERNAL_API_KEY`) to match y
 npm run dev    # local dev on port 8787
 ```
 
-### 3. Agent app
+#### 3. Agent app
 
 ```bash
 cd agent_app
@@ -122,13 +125,13 @@ When the agent receives a storage task, it:
 
 ## Azure Deployment
 
-Deploy everything to Azure App Service with three scripts:
+Deploy everything to Azure with three scripts:
 
 ```powershell
 cd deploy
 cp deploy.config.example.toml deploy.config.toml   # edit with your values
 
-# 1. Provision infrastructure (Storage, App Service Plan, 2 Web Apps, RBAC)
+# 1. Provision all infrastructure + generate .env files
 .\deploy.ps1
 
 # 2. Deploy code to App Services
@@ -136,6 +139,9 @@ cp deploy.config.example.toml deploy.config.toml   # edit with your values
 
 # 3. Upload sample test data
 .\upload-dummy-data.ps1
+
+# 4. Deploy Cloudflare Worker (separate)
+cd ..\codemode_openapi && npx wrangler deploy
 ```
 
 **What gets created:**
@@ -143,14 +149,22 @@ cp deploy.config.example.toml deploy.config.toml   # edit with your values
 | Resource | Purpose |
 |---|---|
 | Storage Account (Data Lake Gen2) | Blob storage for the API |
+| Azure OpenAI + model deployment | LLM for the chatbot agent |
 | App Service Plan (Linux B1) | Shared plan for both web apps |
 | Web App: storage API | FastAPI OpenAPI facade over storage |
 | Web App: chatbot API | Agent Framework chatbot with chat sessions |
 | RBAC assignments | Managed identity access to storage + OpenAI |
 
-**What is NOT created** (already exists or runs externally):
-- Azure OpenAI — referenced from your existing deployment
-- Cloudflare Worker — deployed separately via `wrangler deploy`
+**What is NOT created** (runs externally on Cloudflare):
+- Cloudflare Worker — deployed separately via `npx wrangler deploy`
+
+**Generated `.env` files** (after `deploy.ps1`):
+
+| File | Contents |
+|---|---|
+| `storage_api/.env` | `AZURE_STORAGE_ACCOUNT_URL`, `INTERNAL_API_KEY` |
+| `agent_app/.env` | `AZURE_OPENAI_ENDPOINT`, deployment name, `CODEMODE_MCP_URL` |
+| `codemode_openapi/.dev.vars` | `OPENAPI_BASE_URL`, `INTERNAL_API_KEY` |
 
 ### Chatbot API endpoints
 

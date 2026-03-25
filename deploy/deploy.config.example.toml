@@ -7,10 +7,11 @@ resource_group = "rg-codemode-agent"
 prefix = "codeagent"              # used to derive resource names
 
 [openai]
-# Reference an EXISTING Azure OpenAI resource (not created by this script)
-account_name = "myaiproject-dev-openai"
-resource_group = "rg-myaiproject-dev-eastus"   # RG where OpenAI lives
 deployment_name = "gpt-5-mini"
+model_name = "gpt-5-mini"
+model_version = "2025-06-01"
+sku_name = "GlobalStandard"
+sku_capacity = 10                 # TPM in thousands
 
 [cloudflare]
 # URL of the deployed Codemode Worker (or local wrangler dev)

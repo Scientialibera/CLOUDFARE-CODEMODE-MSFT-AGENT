@@ -51,6 +51,7 @@ if (-not (Test-Path $ConfigPath)) {
 
 $config = Parse-Toml -Path $ConfigPath
 $scriptName = "deploy"
+$repoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 
 $subscriptionId = $config.azure.subscription_id
 if ([string]::IsNullOrWhiteSpace($subscriptionId)) { $subscriptionId = az account show --query id -o tsv }
@@ -63,10 +64,13 @@ $storageAccountName = "${prefix}storage" -replace '[^a-z0-9]',''
 $appServicePlanName = "plan-$prefix"
 $storageApiAppName  = "app-${prefix}-storageapi"
 $chatbotApiAppName  = "app-${prefix}-chatbot"
+$openAiAccountName  = "aoai-$prefix"
 
-$openAiAccount   = $config.openai.account_name
-$openAiRg        = if ($config.openai.resource_group) { $config.openai.resource_group } else { $rg }
-$openAiDeployment = if ($config.openai.deployment_name) { $config.openai.deployment_name } else { "gpt-5-mini" }
+$openAiDeployment   = if ($config.openai.deployment_name) { $config.openai.deployment_name } else { "gpt-5-mini" }
+$openAiModelName    = if ($config.openai.model_name) { $config.openai.model_name } else { "gpt-5-mini" }
+$openAiModelVersion = if ($config.openai.model_version) { $config.openai.model_version } else { "2025-06-01" }
+$openAiSkuName      = if ($config.openai.sku_name) { $config.openai.sku_name } else { "GlobalStandard" }
+$openAiSkuCapacity  = if ($config.openai.sku_capacity) { $config.openai.sku_capacity } else { "10" }
 
 $codemodeMcpUrl = if ($config.cloudflare.codemode_mcp_url) { $config.cloudflare.codemode_mcp_url } else { "http://localhost:8787/mcp" }
 
@@ -77,10 +81,10 @@ Write-Output "  Subscription:     $subscriptionId"
 Write-Output "  Resource Group:   $rg"
 Write-Output "  Location:         $location"
 Write-Output "  Storage Account:  $storageAccountName"
+Write-Output "  Azure OpenAI:     $openAiAccountName (model: $openAiModelName)"
 Write-Output "  App Service Plan: $appServicePlanName"
 Write-Output "  Storage API App:  $storageApiAppName"
 Write-Output "  Chatbot API App:  $chatbotApiAppName"
-Write-Output "  OpenAI Account:   $openAiAccount (in $openAiRg)"
 Write-Output "  Codemode MCP URL: $codemodeMcpUrl"
 
 az account set --subscription $subscriptionId
@@ -129,10 +133,48 @@ foreach ($c in $containers) {
 }
 
 # ===================================================================
-# 3. App Service Plan (Linux, Python)
+# 3. Azure OpenAI
 # ===================================================================
 
-Write-Step $scriptName "3. App Service Plan '$appServicePlanName'"
+Write-Step $scriptName "3. Azure OpenAI '$openAiAccountName'"
+$aoaiExists = az cognitiveservices account list --resource-group $rg --query "[?name=='$openAiAccountName'] | length(@)" -o tsv
+if ($aoaiExists -eq "0") {
+    az cognitiveservices account create `
+        --name $openAiAccountName `
+        --resource-group $rg `
+        --kind OpenAI `
+        --sku S0 `
+        --location $location `
+        --custom-domain $openAiAccountName | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create Azure OpenAI account." }
+}
+
+$aoaiEndpoint = az cognitiveservices account show --resource-group $rg --name $openAiAccountName --query properties.endpoint -o tsv
+$aoaiScope    = az cognitiveservices account show --resource-group $rg --name $openAiAccountName --query id -o tsv
+
+Write-Step $scriptName "3b. OpenAI Model Deployment '$openAiDeployment'"
+$depExists = az cognitiveservices account deployment list --name $openAiAccountName --resource-group $rg --query "[?name=='$openAiDeployment'] | length(@)" -o tsv
+if ($depExists -eq "0") {
+    az cognitiveservices account deployment create `
+        --name $openAiAccountName `
+        --resource-group $rg `
+        --deployment-name $openAiDeployment `
+        --model-format OpenAI `
+        --model-name $openAiModelName `
+        --model-version $openAiModelVersion `
+        --sku-name $openAiSkuName `
+        --sku-capacity $openAiSkuCapacity | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create model deployment." }
+}
+
+Ensure-RoleAssignment -PrincipalId $executorObjectId -PrincipalType User -Scope $aoaiScope -Role "Cognitive Services OpenAI User"
+Write-Output "  Endpoint: $aoaiEndpoint"
+
+# ===================================================================
+# 4. App Service Plan (Linux, Python)
+# ===================================================================
+
+Write-Step $scriptName "4. App Service Plan '$appServicePlanName'"
 $planExists = az appservice plan list --resource-group $rg --query "[?name=='$appServicePlanName'] | length(@)" -o tsv
 if ($planExists -eq "0") {
     az appservice plan create `
@@ -144,10 +186,10 @@ if ($planExists -eq "0") {
 }
 
 # ===================================================================
-# 4. Storage API Web App
+# 5. Storage API Web App
 # ===================================================================
 
-Write-Step $scriptName "4. Storage API Web App '$storageApiAppName'"
+Write-Step $scriptName "5. Storage API Web App '$storageApiAppName'"
 $storageAppExists = az webapp list --resource-group $rg --query "[?name=='$storageApiAppName'] | length(@)" -o tsv
 if ($storageAppExists -eq "0") {
     az webapp create `
@@ -160,7 +202,7 @@ if ($storageAppExists -eq "0") {
 az webapp identity assign --resource-group $rg --name $storageApiAppName | Out-Null
 $storageApiPrincipalId = az webapp identity show --resource-group $rg --name $storageApiAppName --query principalId -o tsv
 
-Write-Step $scriptName "4b. Storage API RBAC + Settings"
+Write-Step $scriptName "5b. Storage API RBAC + Settings"
 Ensure-RoleAssignment -PrincipalId $storageApiPrincipalId -Scope $storageScope -Role "Storage Blob Data Contributor"
 
 az webapp config appsettings set --resource-group $rg --name $storageApiAppName --settings `
@@ -173,10 +215,10 @@ $storageApiUrl = "https://$storageApiFqdn"
 Write-Output "  Storage API URL: $storageApiUrl"
 
 # ===================================================================
-# 5. Chatbot API Web App
+# 6. Chatbot API Web App
 # ===================================================================
 
-Write-Step $scriptName "5. Chatbot API Web App '$chatbotApiAppName'"
+Write-Step $scriptName "6. Chatbot API Web App '$chatbotApiAppName'"
 $chatbotAppExists = az webapp list --resource-group $rg --query "[?name=='$chatbotApiAppName'] | length(@)" -o tsv
 if ($chatbotAppExists -eq "0") {
     az webapp create `
@@ -189,10 +231,7 @@ if ($chatbotAppExists -eq "0") {
 az webapp identity assign --resource-group $rg --name $chatbotApiAppName | Out-Null
 $chatbotPrincipalId = az webapp identity show --resource-group $rg --name $chatbotApiAppName --query principalId -o tsv
 
-Write-Step $scriptName "5b. Chatbot API RBAC + Settings"
-$aoaiScope = az cognitiveservices account show --resource-group $openAiRg --name $openAiAccount --query id -o tsv
-$aoaiEndpoint = az cognitiveservices account show --resource-group $openAiRg --name $openAiAccount --query properties.endpoint -o tsv
-
+Write-Step $scriptName "6b. Chatbot API RBAC + Settings"
 Ensure-RoleAssignment -PrincipalId $chatbotPrincipalId -Scope $aoaiScope -Role "Cognitive Services OpenAI User"
 Ensure-RoleAssignment -PrincipalId $chatbotPrincipalId -Scope $storageScope -Role "Storage Blob Data Reader"
 
@@ -208,10 +247,43 @@ $chatbotUrl = "https://$chatbotFqdn"
 Write-Output "  Chatbot API URL: $chatbotUrl"
 
 # ===================================================================
-# 6. Save deploy-env.json
+# 7. Generate .env files for local development
 # ===================================================================
 
-Write-Step $scriptName "6. Saving deploy-env.json"
+Write-Step $scriptName "7. Generating .env files"
+
+$internalApiKey = "local-dev-key"
+
+# storage_api/.env
+$storageApiEnvPath = Join-Path $repoRoot "storage_api" ".env"
+@"
+AZURE_STORAGE_ACCOUNT_URL=$storageAccountUrl
+INTERNAL_API_KEY=$internalApiKey
+"@ | Set-Content -Path $storageApiEnvPath -Encoding UTF8
+Write-Output "  Written: storage_api/.env"
+
+# agent_app/.env
+$agentAppEnvPath = Join-Path $repoRoot "agent_app" ".env"
+@"
+AZURE_OPENAI_ENDPOINT=$aoaiEndpoint
+AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$openAiDeployment
+CODEMODE_MCP_URL=$codemodeMcpUrl
+"@ | Set-Content -Path $agentAppEnvPath -Encoding UTF8
+Write-Output "  Written: agent_app/.env"
+
+# codemode_openapi/.env (wrangler reads .dev.vars for local secrets)
+$codemodeEnvPath = Join-Path $repoRoot "codemode_openapi" ".dev.vars"
+@"
+OPENAPI_BASE_URL=$storageApiUrl
+INTERNAL_API_KEY=$internalApiKey
+"@ | Set-Content -Path $codemodeEnvPath -Encoding UTF8
+Write-Output "  Written: codemode_openapi/.dev.vars"
+
+# ===================================================================
+# 8. Save deploy-env.json
+# ===================================================================
+
+Write-Step $scriptName "8. Saving deploy-env.json"
 $envFile = Join-Path $PSScriptRoot "deploy-env.json"
 @{
     subscriptionId      = $subscriptionId
@@ -224,7 +296,7 @@ $envFile = Join-Path $PSScriptRoot "deploy-env.json"
     storageApiUrl       = $storageApiUrl
     chatbotApiAppName   = $chatbotApiAppName
     chatbotApiUrl       = $chatbotUrl
-    openAiAccount       = $openAiAccount
+    openAiAccountName   = $openAiAccountName
     openAiEndpoint      = $aoaiEndpoint
     openAiDeployment    = $openAiDeployment
     codemodeMcpUrl      = $codemodeMcpUrl
@@ -238,12 +310,19 @@ Write-Step $scriptName "INFRASTRUCTURE DEPLOYMENT COMPLETE"
 Write-Output ""
 Write-Output "  Resource Group:    $rg"
 Write-Output "  Storage Account:   $storageAccountName ($storageAccountUrl)"
+Write-Output "  Azure OpenAI:      $openAiAccountName ($aoaiEndpoint)"
+Write-Output "  Model Deployment:  $openAiDeployment ($openAiModelName)"
 Write-Output "  App Service Plan:  $appServicePlanName"
 Write-Output "  Storage API:       $storageApiAppName ($storageApiUrl)"
 Write-Output "  Chatbot API:       $chatbotApiAppName ($chatbotUrl)"
-Write-Output "  Azure OpenAI:      $openAiAccount ($aoaiEndpoint)"
 Write-Output "  Codemode MCP URL:  $codemodeMcpUrl"
+Write-Output ""
+Write-Output "  Generated env files:"
+Write-Output "    storage_api/.env"
+Write-Output "    agent_app/.env"
+Write-Output "    codemode_openapi/.dev.vars"
 Write-Output ""
 Write-Output "Next steps:"
 Write-Output "  1. deploy\deploy-apps.ps1       - zip deploy code to both App Services"
 Write-Output "  2. deploy\upload-dummy-data.ps1  - upload test PDFs to storage"
+Write-Output "  3. cd codemode_openapi && npx wrangler deploy  - deploy Cloudflare Worker"
