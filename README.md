@@ -42,6 +42,17 @@ Authentication stays on the host side (never enters the sandbox).
 
 Connects to Azure OpenAI (`gpt-5-mini`) and the Codemode MCP endpoint. The agent uses the wrapped tools to perform storage operations autonomously.
 
+- `app.py` — interactive CLI for local testing
+- `chatbot_api.py` — FastAPI web API with chat session management (used for deployment)
+
+### `deploy/` — Azure deployment scripts
+
+Imperative `az` CLI scripts to provision and deploy everything to Azure:
+
+- `deploy.ps1` — provisions Storage Account, App Service Plan, 2 Web Apps, RBAC assignments
+- `deploy-apps.ps1` — zip-deploys code to both App Services
+- `upload-dummy-data.ps1` — generates and uploads sample PDFs to storage
+
 ## Prerequisites
 
 - **Azure CLI** — signed in (`az login`)
@@ -108,6 +119,48 @@ When the agent receives a storage task, it:
 3. The JS runs in an isolated Cloudflare Worker sandbox; tool calls are dispatched back to the host via Workers RPC
 4. The host forwards requests to the FastAPI storage API with auth headers
 5. Results flow back through Codemode to the agent
+
+## Azure Deployment
+
+Deploy everything to Azure App Service with three scripts:
+
+```powershell
+cd deploy
+cp deploy.config.example.toml deploy.config.toml   # edit with your values
+
+# 1. Provision infrastructure (Storage, App Service Plan, 2 Web Apps, RBAC)
+.\deploy.ps1
+
+# 2. Deploy code to App Services
+.\deploy-apps.ps1
+
+# 3. Upload sample test data
+.\upload-dummy-data.ps1
+```
+
+**What gets created:**
+
+| Resource | Purpose |
+|---|---|
+| Storage Account (Data Lake Gen2) | Blob storage for the API |
+| App Service Plan (Linux B1) | Shared plan for both web apps |
+| Web App: storage API | FastAPI OpenAPI facade over storage |
+| Web App: chatbot API | Agent Framework chatbot with chat sessions |
+| RBAC assignments | Managed identity access to storage + OpenAI |
+
+**What is NOT created** (already exists or runs externally):
+- Azure OpenAI — referenced from your existing deployment
+- Cloudflare Worker — deployed separately via `wrangler deploy`
+
+### Chatbot API endpoints
+
+Once deployed, the chatbot API exposes:
+
+- `POST /chat` — send a message (optionally with `chat_id` to continue a conversation)
+- `GET /chats` — list active chat sessions
+- `GET /chats/{chat_id}` — get full chat history
+- `DELETE /chats/{chat_id}` — delete a chat session
+- `GET /docs` — Swagger UI
 
 ## Key implementation notes
 

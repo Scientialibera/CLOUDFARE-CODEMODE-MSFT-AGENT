@@ -39,3 +39,9 @@ test_pdfs/
 
 # Conversation log
 convo.txt
+
+# Deploy artifacts
+deploy/deploy.config.toml
+deploy/deploy-env.json
+deploy/*.zip
+deploy/_temp_pdfs/

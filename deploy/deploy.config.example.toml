@@ -1,0 +1,20 @@
+[azure]
+subscription_id = ""              # leave blank to use current az CLI subscription
+location = "eastus"
+resource_group = "rg-codemode-agent"
+
+[naming]
+prefix = "codeagent"              # used to derive resource names
+
+[openai]
+# Reference an EXISTING Azure OpenAI resource (not created by this script)
+account_name = "myaiproject-dev-openai"
+resource_group = "rg-myaiproject-dev-eastus"   # RG where OpenAI lives
+deployment_name = "gpt-5-mini"
+
+[cloudflare]
+# URL of the deployed Codemode Worker (or local wrangler dev)
+codemode_mcp_url = "http://localhost:8787/mcp"
+
+[storage]
+containers = ["data"]
