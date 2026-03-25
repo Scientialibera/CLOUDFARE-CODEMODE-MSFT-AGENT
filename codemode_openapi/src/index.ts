@@ -5,7 +5,6 @@ import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 type Env = {
   LOADER: unknown;
   OPENAPI_BASE_URL: string;
-  INTERNAL_API_KEY?: string;
 };
 
 let cachedSpec: Record<string, unknown> | null = null;
@@ -30,13 +29,7 @@ async function fetchSpec(env: Env): Promise<Record<string, unknown>> {
   if (cachedSpec) return cachedSpec;
 
   const url = new URL("/openapi.json", env.OPENAPI_BASE_URL);
-  const headers = new Headers();
-
-  if (env.INTERNAL_API_KEY) {
-    headers.set("x-internal-api-key", env.INTERNAL_API_KEY);
-  }
-
-  const res = await fetch(url.toString(), { headers });
+  const res = await fetch(url.toString());
   if (!res.ok) {
     throw new Error(`Failed to load OpenAPI spec: ${res.status} ${await res.text()}`);
   }
@@ -57,17 +50,9 @@ function buildServer(spec: Record<string, unknown>, env: Env) {
       const url = new URL(path, env.OPENAPI_BASE_URL);
       appendQuery(url, query as Record<string, unknown> | undefined);
 
-      const headers = new Headers({
-        "content-type": "application/json",
-      });
-
-      if (env.INTERNAL_API_KEY) {
-        headers.set("x-internal-api-key", env.INTERNAL_API_KEY);
-      }
-
       const res = await fetch(url.toString(), {
         method,
-        headers,
+        headers: { "content-type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
 

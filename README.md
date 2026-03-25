@@ -162,9 +162,9 @@ cd ..\codemode_openapi && npx wrangler deploy
 
 | File | Contents |
 |---|---|
-| `storage_api/.env` | `AZURE_STORAGE_ACCOUNT_URL`, `INTERNAL_API_KEY` |
+| `storage_api/.env` | `AZURE_STORAGE_ACCOUNT_URL` |
 | `agent_app/.env` | `AZURE_OPENAI_ENDPOINT`, deployment name, `CODEMODE_MCP_URL` |
-| `codemode_openapi/.dev.vars` | `OPENAPI_BASE_URL`, `INTERNAL_API_KEY` |
+| `codemode_openapi/.dev.vars` | `OPENAPI_BASE_URL` |
 
 ### Chatbot API endpoints
 

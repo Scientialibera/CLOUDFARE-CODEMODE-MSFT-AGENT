@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
@@ -16,7 +16,6 @@ ACCOUNT_URL = os.getenv(
     "AZURE_STORAGE_ACCOUNT_URL",
     "https://myaiprojectdevdatalake.blob.core.windows.net/",
 )
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY")
 
 credential = DefaultAzureCredential()
 blob_service = BlobServiceClient(account_url=ACCOUNT_URL, credential=credential)
@@ -29,15 +28,6 @@ app = FastAPI(
         "Designed to be wrapped by Cloudflare Codemode openApiMcpServer."
     ),
 )
-
-
-def require_internal_api_key(
-    x_internal_api_key: str | None = Header(default=None),
-) -> None:
-    if not INTERNAL_API_KEY:
-        return
-    if x_internal_api_key != INTERNAL_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing x-internal-api-key header")
 
 
 def get_container_client(container: str):
@@ -75,7 +65,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/containers", dependencies=[Depends(require_internal_api_key)])
+@app.get("/containers")
 def list_containers(
     prefix: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
@@ -102,7 +92,7 @@ def list_containers(
     }
 
 
-@app.post("/containers", dependencies=[Depends(require_internal_api_key)])
+@app.post("/containers")
 def create_container(payload: CreateContainerRequest) -> dict[str, Any]:
     try:
         response = blob_service.create_container(payload.name)
@@ -116,7 +106,7 @@ def create_container(payload: CreateContainerRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail=f"Container '{payload.name}' already exists")
 
 
-@app.delete("/containers/{container_name}", dependencies=[Depends(require_internal_api_key)])
+@app.delete("/containers/{container_name}")
 def delete_container(container_name: str) -> Response:
     try:
         blob_service.delete_container(container_name)
@@ -125,7 +115,7 @@ def delete_container(container_name: str) -> Response:
         raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
 
 
-@app.get("/containers/{container_name}/blobs", dependencies=[Depends(require_internal_api_key)])
+@app.get("/containers/{container_name}/blobs")
 def list_blobs(
     container_name: str,
     prefix: str | None = Query(default=None),
@@ -169,10 +159,7 @@ def list_blobs(
     }
 
 
-@app.get(
-    "/containers/{container_name}/blobs/{blob_path:path}/metadata",
-    dependencies=[Depends(require_internal_api_key)],
-)
+@app.get("/containers/{container_name}/blobs/{blob_path:path}/metadata")
 def get_blob_metadata(container_name: str, blob_path: str) -> dict[str, Any]:
     client = get_blob_client(container_name, blob_path)
     try:
@@ -195,10 +182,7 @@ def get_blob_metadata(container_name: str, blob_path: str) -> dict[str, Any]:
     }
 
 
-@app.get(
-    "/containers/{container_name}/blobs/{blob_path:path}/text",
-    dependencies=[Depends(require_internal_api_key)],
-)
+@app.get("/containers/{container_name}/blobs/{blob_path:path}/text")
 def download_blob_text(
     container_name: str,
     blob_path: str,
@@ -220,10 +204,7 @@ def download_blob_text(
     }
 
 
-@app.put(
-    "/containers/{container_name}/blobs/{blob_path:path}/text",
-    dependencies=[Depends(require_internal_api_key)],
-)
+@app.put("/containers/{container_name}/blobs/{blob_path:path}/text")
 def upload_blob_text(container_name: str, blob_path: str, payload: UploadTextRequest) -> dict[str, Any]:
     client = get_blob_client(container_name, blob_path)
     data = payload.text.encode("utf-8")
@@ -244,10 +225,7 @@ def upload_blob_text(container_name: str, blob_path: str, payload: UploadTextReq
     }
 
 
-@app.delete(
-    "/containers/{container_name}/blobs/{blob_path:path}",
-    dependencies=[Depends(require_internal_api_key)],
-)
+@app.delete("/containers/{container_name}/blobs/{blob_path:path}")
 def delete_blob(container_name: str, blob_path: str) -> Response:
     client = get_blob_client(container_name, blob_path)
     try:
@@ -257,7 +235,7 @@ def delete_blob(container_name: str, blob_path: str) -> Response:
         raise HTTPException(status_code=404, detail=f"Blob '{blob_path}' not found in '{container_name}'")
 
 
-@app.post("/blobs/copy", dependencies=[Depends(require_internal_api_key)])
+@app.post("/blobs/copy")
 def copy_blob(payload: CopyBlobRequest) -> dict[str, Any]:
     source_client = get_blob_client(payload.source_container, payload.source_blob)
     destination_client = get_blob_client(payload.destination_container, payload.destination_blob)

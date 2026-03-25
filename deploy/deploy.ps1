@@ -252,13 +252,10 @@ Write-Output "  Chatbot API URL: $chatbotUrl"
 
 Write-Step $scriptName "7. Generating .env files"
 
-$internalApiKey = "local-dev-key"
-
 # storage_api/.env
 $storageApiEnvPath = Join-Path $repoRoot "storage_api" ".env"
 @"
 AZURE_STORAGE_ACCOUNT_URL=$storageAccountUrl
-INTERNAL_API_KEY=$internalApiKey
 "@ | Set-Content -Path $storageApiEnvPath -Encoding UTF8
 Write-Output "  Written: storage_api/.env"
 
@@ -271,11 +268,10 @@ CODEMODE_MCP_URL=$codemodeMcpUrl
 "@ | Set-Content -Path $agentAppEnvPath -Encoding UTF8
 Write-Output "  Written: agent_app/.env"
 
-# codemode_openapi/.env (wrangler reads .dev.vars for local secrets)
+# codemode_openapi/.dev.vars (wrangler reads this for local overrides)
 $codemodeEnvPath = Join-Path $repoRoot "codemode_openapi" ".dev.vars"
 @"
 OPENAPI_BASE_URL=$storageApiUrl
-INTERNAL_API_KEY=$internalApiKey
 "@ | Set-Content -Path $codemodeEnvPath -Encoding UTF8
 Write-Output "  Written: codemode_openapi/.dev.vars"
 

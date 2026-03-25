@@ -6,8 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
 
   "vars": {
-    "OPENAPI_BASE_URL": "http://localhost:8001",
-    "INTERNAL_API_KEY": "local-dev-key"
+    "OPENAPI_BASE_URL": "http://localhost:8001"
   },
 
   "worker_loaders": [
