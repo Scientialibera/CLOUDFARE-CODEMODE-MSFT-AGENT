@@ -162,9 +162,14 @@ Once deployed, the chatbot API exposes:
 - `DELETE /chats/{chat_id}` — delete a chat session
 - `GET /docs` — Swagger UI
 
+If a `chat_id` is provided but not found (expired or invalid), the API creates a new session and returns `"new_session": true` — it never fails on a missing chat.
+
+Chat sessions are automatically flushed after 24 hours of inactivity (configurable via `CHAT_TTL_HOURS` env var) to prevent memory growth on the App Service.
+
 ## Key implementation notes
 
 - `AzureOpenAIChatClient` is used (Chat Completions API) rather than `AzureOpenAIResponsesClient` (Responses API requires additional RBAC for `responses/write`)
 - `MCPStreamableHTTPTool` is initialized with `load_prompts=False` because the Codemode MCP server only exposes tools, not prompts
 - A new `McpServer` instance is created per request in the Worker to avoid "already connected to transport" errors
 - The OpenAPI spec is cached after first fetch for performance
+- In-memory chat sessions are evicted after 24h via a background asyncio task

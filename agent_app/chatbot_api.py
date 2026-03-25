@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from dotenv import load_dotenv
@@ -31,16 +32,34 @@ Guidelines:
 - Blob names may contain slashes; preserve them exactly.
 """.strip()
 
+CHAT_TTL = timedelta(hours=int(os.getenv("CHAT_TTL_HOURS", "24")))
+FLUSH_INTERVAL_SECONDS = 3600
+
 chats: dict[str, list[dict[str, Any]]] = {}
+_flush_task: asyncio.Task | None = None
 
 credential: DefaultAzureCredential | None = None
 storage_tool: MCPStreamableHTTPTool | None = None
 client: AzureOpenAIChatClient | None = None
 
 
+async def _flush_expired_chats() -> None:
+    """Periodically remove chat sessions whose last activity exceeds CHAT_TTL."""
+    while True:
+        await asyncio.sleep(FLUSH_INTERVAL_SECONDS)
+        cutoff = datetime.now(timezone.utc) - CHAT_TTL
+        expired = [
+            cid
+            for cid, msgs in chats.items()
+            if msgs and datetime.fromisoformat(msgs[-1]["timestamp"]) < cutoff
+        ]
+        for cid in expired:
+            del chats[cid]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global credential, storage_tool, client
+    global credential, storage_tool, client, _flush_task
 
     endpoint = os.getenv(
         "AZURE_OPENAI_ENDPOINT",
@@ -66,8 +85,12 @@ async def lifespan(app: FastAPI):
         credential=credential,
     )
 
+    _flush_task = asyncio.create_task(_flush_expired_chats())
+
     yield
 
+    if _flush_task:
+        _flush_task.cancel()
     if storage_tool:
         await storage_tool.__aexit__(None, None, None)
     if credential:
@@ -94,6 +117,10 @@ class ChatResponse(BaseModel):
     chat_id: str
     reply: str
     created_at: str
+    new_session: bool = Field(
+        default=False,
+        description="True when the requested chat_id was not found and a fresh session was created.",
+    )
 
 
 class ChatSummary(BaseModel):
@@ -113,10 +140,14 @@ async def chat(req: ChatRequest) -> ChatResponse:
     if client is None or storage_tool is None:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
-    chat_id = req.chat_id or str(uuid.uuid4())
-
-    if chat_id not in chats:
+    new_session = False
+    if req.chat_id and req.chat_id in chats:
+        chat_id = req.chat_id
+    else:
+        chat_id = str(uuid.uuid4())
         chats[chat_id] = []
+        if req.chat_id:
+            new_session = True
 
     now = datetime.now(timezone.utc).isoformat()
     chats[chat_id].append({"role": "user", "content": req.message, "timestamp": now})
@@ -139,7 +170,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     chats[chat_id].append({"role": "assistant", "content": reply, "timestamp": now})
 
-    return ChatResponse(chat_id=chat_id, reply=reply, created_at=now)
+    return ChatResponse(
+        chat_id=chat_id, reply=reply, created_at=now, new_session=new_session,
+    )
 
 
 @app.get("/chats", response_model=list[ChatSummary])
